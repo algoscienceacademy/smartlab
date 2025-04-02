@@ -1,0 +1,1683 @@
+import sys
+import math
+import numpy as np
+from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
+                             QHBoxLayout, QToolBar, QLabel, QListWidget,
+                             QGraphicsScene, QGraphicsView, QMenuBar, QMenu,
+                             QGraphicsItem, QGraphicsLineItem, QGraphicsRectItem,
+                             QStatusBar, QGraphicsTextItem, QFrame, QGraphicsEllipseItem,
+                             QGraphicsDropShadowEffect, QDialog, QFormLayout,
+                             QLineEdit, QDoubleSpinBox, QComboBox, QPushButton,
+                             QCheckBox, QGraphicsPathItem, QGraphicsProxyWidget,
+                             QTabWidget)  # Added QTabWidget here
+from PySide6.QtCore import Qt, QPointF, QRectF, QMimeData, Signal, QPoint, QSize
+from PySide6.QtGui import (QPainter, QPen, QColor, QAction, QDrag, QPainterPath, 
+                          QFont, QPixmap, QBrush, QLinearGradient)
+# Add matplotlib for visualization
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
+from matplotlib.figure import Figure
+
+# Professional component symbols and colors
+class Component:
+    def __init__(self, name, symbol, pins=2):
+        self.name = name
+        self.symbol = symbol
+        self.pins = pins
+        self.properties = self._get_default_properties()
+        
+    def _get_default_properties(self):
+        """Set default properties based on component type"""
+        if self.name == "Resistor":
+            return {"Resistance (Ω)": "1000", "Power (W)": "0.25", "Tolerance (%)": "5"}
+        elif self.name == "Capacitor":
+            return {"Capacitance (F)": "0.000001", "Voltage Rating (V)": "25", "Type": "Ceramic"}
+        elif self.name == "Inductor":
+            return {"Inductance (H)": "0.001", "Current Rating (A)": "1.0"}
+        elif self.name == "Battery":
+            return {"Voltage (V)": "9.0", "Type": "DC"}
+        elif self.name == "LED":
+            return {"Forward Voltage (V)": "2.0", "Current (mA)": "20", "Color": "Red"}
+        elif self.name == "Transistor":
+            return {"Type": "NPN", "Gain (hFE)": "100", "Vce max (V)": "40"}
+        elif self.name == "Diode":
+            return {"Forward Voltage (V)": "0.7", "Current (mA)": "100"}
+        elif self.name == "Switch":
+            return {"Type": "SPST", "Current Rating (A)": "1.0"}
+        elif self.name == "Potentiometer":
+            return {"Resistance (Ω)": "10000", "Power (W)": "0.5"}
+        elif self.name == "IC":
+            return {"Type": "Op-Amp", "Supply Voltage (V)": "±15"}
+        else:
+            return {}
+
+class ComponentItem(QGraphicsItem):
+    def __init__(self, component, parent=None):
+        super().__init__(parent)
+        self.component = component
+        self.setFlag(QGraphicsItem.ItemIsMovable)
+        self.setFlag(QGraphicsItem.ItemIsSelectable)
+        self.setFlag(QGraphicsItem.ItemSendsGeometryChanges)
+        self.setAcceptHoverEvents(True)
+        self.rotation_angle = 0
+        self.hovered = False
+        self.pen_width = 2
+        self.bg_color = QColor(240, 240, 240)
+        self.pin_points = []
+        self._generate_pin_points()
+        
+        # Add right-click menu support
+        self.setAcceptedMouseButtons(Qt.LeftButton | Qt.RightButton)
+
+    def _generate_pin_points(self):
+        # Generate pin connection points based on component type
+        self.pin_points = []
+        if self.component.pins == 2:  # Standard 2-pin components
+            self.pin_points = [QPointF(-25, 0), QPointF(25, 0)]
+        elif self.component.pins == 3:  # Transistors, etc.
+            self.pin_points = [QPointF(-25, 0), QPointF(25, -15), QPointF(25, 15)]
+        elif self.component.pins == 4:  # ICs, etc.
+            self.pin_points = [QPointF(-25, -15), QPointF(-25, 15), 
+                              QPointF(25, -15), QPointF(25, 15)]
+
+    def boundingRect(self):
+        return QRectF(-30, -25, 60, 50)
+
+    def paint(self, painter, option, widget):
+        # Draw component with professional appearance
+        painter.setRenderHint(QPainter.Antialiasing)
+        
+        # Background fill
+        if self.isSelected():
+            background = QLinearGradient(0, -25, 0, 25)
+            background.setColorAt(0, QColor(200, 230, 250))
+            background.setColorAt(1, QColor(150, 200, 240))
+            painter.setBrush(QBrush(background))
+            pen = QPen(QColor(50, 100, 220), self.pen_width)
+        elif self.hovered:
+            painter.setBrush(QBrush(QColor(245, 245, 220)))
+            pen = QPen(QColor(100, 100, 100), self.pen_width)
+        else:
+            painter.setBrush(QBrush(self.bg_color))
+            pen = QPen(QColor(0, 0, 0), self.pen_width)
+        
+        painter.setPen(pen)
+        painter.drawRoundedRect(-25, -20, 50, 40, 5, 5)
+        
+        # Draw component symbol
+        font = QFont()
+        font.setBold(True)
+        painter.setFont(font)
+        painter.drawText(QRectF(-20, -15, 40, 30), Qt.AlignCenter, self.component.symbol)
+        
+        # Draw pin connection points
+        painter.setPen(QPen(QColor(200, 0, 0), 1.5))
+        for pin in self.pin_points:
+            painter.drawEllipse(pin, 3, 3)
+
+    def hoverEnterEvent(self, event):
+        self.hovered = True
+        self.update()
+        super().hoverEnterEvent(event)
+
+    def hoverLeaveEvent(self, event):
+        self.hovered = False
+        self.update()
+        super().hoverLeaveEvent(event)
+
+    def itemChange(self, change, value):
+        if change == QGraphicsItem.ItemPositionChange:
+            # Snap to grid (grid size 10x10)
+            grid_size = 10
+            x = round(value.x() / grid_size) * grid_size
+            y = round(value.y() / grid_size) * grid_size
+            return QPointF(x, y)
+        return super().itemChange(change, value)
+    
+    def mousePressEvent(self, event):
+        if event.button() == Qt.RightButton:
+            self.showPropertyEditor()
+        else:
+            super().mousePressEvent(event)
+    
+    def showPropertyEditor(self):
+        """Show the property editor dialog for this component"""
+        dialog = PropertyEditorDialog(self.component)
+        if dialog.exec():
+            self.update()  # Redraw the component if properties changed
+
+    def setMovable(self, movable):
+        """Enable or disable movement of the component"""
+        if movable:
+            self.setFlag(QGraphicsItem.ItemIsMovable, True)
+        else:
+            self.setFlag(QGraphicsItem.ItemIsMovable, False)
+
+class PropertyEditorDialog(QDialog):
+    def __init__(self, component, parent=None):
+        super().__init__(parent)
+        self.component = component
+        self.setWindowTitle(f"Edit {component.name} Properties")
+        self.setMinimumWidth(300)
+        
+        # Main layout
+        layout = QVBoxLayout(self)
+        
+        # Form layout for properties
+        form_layout = QFormLayout()
+        
+        # Create editors for each property
+        self.editors = {}
+        for key, value in component.properties.items():
+            if "Resistance" in key or "Voltage" in key or "Current" in key or "Power" in key:
+                editor = QDoubleSpinBox()
+                editor.setRange(0, 1000000)
+                editor.setValue(float(value))
+                editor.setDecimals(6)  # Allow for small values like capacitance
+                editor.setSuffix(f" {key.split('(')[1].split(')')[0]}")
+            elif "Type" in key or "Color" in key:
+                editor = QComboBox()
+                if "Type" in key and "Transistor" in component.name:
+                    editor.addItems(["NPN", "PNP", "MOSFET-N", "MOSFET-P"])
+                elif "Type" in key and "Capacitor" in component.name:
+                    editor.addItems(["Ceramic", "Electrolytic", "Tantalum", "Film"])
+                elif "Type" in key and "Switch" in component.name:
+                    editor.addItems(["SPST", "SPDT", "DPST", "DPDT"])
+                elif "Color" in key:
+                    editor.addItems(["Red", "Green", "Blue", "Yellow", "White", "RGB"])
+                elif "Type" in key and "IC" in component.name:
+                    editor.addItems(["Op-Amp", "Microcontroller", "Logic Gate", "Timer"])
+                elif "Type" in key:
+                    editor.addItems(["DC", "AC"])
+                
+                current_index = editor.findText(value)
+                if current_index >= 0:
+                    editor.setCurrentIndex(current_index)
+            else:
+                editor = QLineEdit(value)
+            
+            form_layout.addRow(key, editor)
+            self.editors[key] = editor
+        
+        layout.addLayout(form_layout)
+        
+        # Add buttons
+        button_layout = QHBoxLayout()
+        ok_button = QPushButton("OK")
+        ok_button.clicked.connect(self.accept)
+        cancel_button = QPushButton("Cancel")
+        cancel_button.clicked.connect(self.reject)
+        
+        button_layout.addWidget(ok_button)
+        button_layout.addWidget(cancel_button)
+        layout.addLayout(button_layout)
+        
+        # Connect accept signal
+        self.accepted.connect(self.update_properties)
+    
+    def update_properties(self):
+        """Update component properties from editors"""
+        for key, editor in self.editors.items():
+            if isinstance(editor, QDoubleSpinBox):
+                self.component.properties[key] = str(editor.value())
+            elif isinstance(editor, QComboBox):
+                self.component.properties[key] = editor.currentText()
+            else:
+                self.component.properties[key] = editor.text()
+
+class SmartWire(QGraphicsPathItem):
+    def __init__(self, x1, y1, x2, y2, parent=None):
+        super().__init__(parent)
+        self.start_pos = QPointF(x1, y1)
+        self.end_pos = QPointF(x2, y2)
+        self.start_component = None  # Add these to track connected components
+        self.end_component = None
+        self.start_pin_index = -1
+        self.end_pin_index = -1
+        
+        # Make wire more visible
+        self.setPen(QPen(QColor(0, 0, 0), 4.0, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        self.setZValue(-1)
+        self.setFlag(QGraphicsItem.ItemIsSelectable)
+        self.setFlag(QGraphicsItem.ItemIsFocusable)
+        self.setAcceptHoverEvents(True)
+        
+        self.recalculate_path()
+
+    def hoverEnterEvent(self, event):
+        # Highlight wire on hover
+        self.setPen(QPen(QColor(0, 100, 255), 4.0, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        super().hoverEnterEvent(event)
+
+    def hoverLeaveEvent(self, event):
+        # Reset wire appearance
+        self.setPen(QPen(QColor(0, 0, 0), 4.0, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        super().hoverLeaveEvent(event)
+
+    def recalculate_path(self):
+        """Calculate the smart path for the wire with Manhattan routing"""
+        # Create a path with horizontal and vertical segments
+        path = QPainterPath()
+        path.moveTo(self.start_pos)
+        
+        # Decide if we should go horizontal first or vertical first
+        dx = self.end_pos.x() - self.start_pos.x()
+        dy = self.end_pos.y() - self.start_pos.y()
+        
+        if abs(dx) > abs(dy):
+            # Go horizontal first
+            midpoint_x = self.start_pos.x() + dx/2
+            path.lineTo(midpoint_x, self.start_pos.y())
+            path.lineTo(midpoint_x, self.end_pos.y())
+        else:
+            # Go vertical first
+            midpoint_y = self.start_pos.y() + dy/2
+            path.lineTo(self.start_pos.x(), midpoint_y)
+            path.lineTo(self.end_pos.x(), midpoint_y)
+        
+        path.lineTo(self.end_pos)
+        self.setPath(path)
+    
+    def update_end_point(self, x, y):
+        """Update the end point of the wire and recalculate the path"""
+        self.end_pos = QPointF(x, y)
+        self.recalculate_path()
+    
+    def update_start_point(self, x, y):
+        """Update the start point of the wire and recalculate the path"""
+        self.start_pos = QPointF(x, y)
+        self.recalculate_path()
+    
+    def paint(self, painter, option, widget):
+        if self.isSelected():
+            pen = QPen(QColor(50, 100, 220), 2.5, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+            painter.setPen(pen)
+        else:
+            painter.setPen(self.pen())
+        painter.drawPath(self.path())
+    
+    def mousePressEvent(self, event):
+        if event.button() == Qt.RightButton:
+            # Handle right-click menu through parent view
+            pass
+        else:
+            super().mousePressEvent(event)
+
+class CircuitSimulator:
+    """Basic circuit simulator class that handles the simulation calculations"""
+    def __init__(self):
+        self.components = {}
+        self.connections = []
+        self.voltage_sources = []
+        self.ground_nodes = []
+        
+    def add_component(self, component_id, component_type, value, connections=None):
+        """Add a component to the simulation"""
+        self.components[component_id] = {
+            'type': component_type,
+            'value': value,
+            'connections': connections or []
+        }
+        
+        # Track voltage sources for simulation
+        if component_type == "Battery":
+            self.voltage_sources.append(component_id)
+    
+    def add_connection(self, from_component, from_pin, to_component, to_pin):
+        """Add a connection between components"""
+        self.connections.append({
+            'from': (from_component, from_pin),
+            'to': (to_component, to_pin)
+        })
+    
+    def simulate(self, duration=1.0, step=0.001):
+        """Run a basic circuit simulation and return time and voltage/current data"""
+        # For basic circuits, we'll use simplified simulation logic
+        # A real implementation would use proper circuit analysis
+        time_points = np.arange(0, duration, step)
+        voltage_data = {}
+        current_data = {}
+        
+        # Check for common circuit patterns
+        if len(self.voltage_sources) == 0:
+            # No voltage source, no simulation possible
+            return time_points, {}, {}
+        
+        # Generate simulation data
+        for component_id, component in self.components.items():
+            # Generate voltage waveforms
+            if component['type'] == "Resistor":
+                resistance = float(component['value'])
+                # Voltage across resistor - account for simple voltage dividers
+                connected_sources = self._find_connected_sources(component_id)
+                voltage = 0
+                for src in connected_sources:
+                    voltage += float(self.components[src]['value'])
+                voltage_data[component_id] = voltage * np.ones_like(time_points)
+                
+                # Current through resistor (V=IR)
+                current_data[component_id] = (voltage / resistance) * np.ones_like(time_points)
+                
+            elif component['type'] == "Capacitor":
+                capacitance = float(component['value'])
+                connected_sources = self._find_connected_sources(component_id)
+                source_voltage = 0
+                for src in connected_sources:
+                    source_voltage += float(self.components[src]['value'])
+                
+                # Capacitor charging curve: V(t) = V_source * (1 - e^(-t/RC))
+                # Find connected resistor(s)
+                total_resistance = 1000  # Default
+                for conn in self.connections:
+                    if conn['from'][0] == component_id or conn['to'][0] == component_id:
+                        other = conn['to'][0] if conn['from'][0] == component_id else conn['from'][0]
+                        if self.components.get(other, {}).get('type') == "Resistor":
+                            total_resistance = float(self.components[other]['value'])
+                
+                rc = total_resistance * capacitance
+                voltage_data[component_id] = source_voltage * (1 - np.exp(-time_points/rc))
+                current_data[component_id] = (source_voltage/total_resistance) * np.exp(-time_points/rc)
+                
+            elif component['type'] == "Inductor":
+                inductance = float(component['value'])
+                connected_sources = self._find_connected_sources(component_id)
+                source_voltage = 0
+                for src in connected_sources:
+                    source_voltage += float(self.components[src]['value'])
+                
+                # Find connected resistor(s)
+                total_resistance = 1000  # Default
+                for conn in self.connections:
+                    if conn['from'][0] == component_id or conn['to'][0] == component_id:
+                        other = conn['to'][0] if conn['from'][0] == component_id else conn['from'][0]
+                        if self.components.get(other, {}).get('type') == "Resistor":
+                            total_resistance = float(self.components[other]['value'])
+                
+                # Inductor current: I(t) = (V/R) * (1 - e^(-Rt/L))
+                voltage_data[component_id] = source_voltage * np.exp(-total_resistance*time_points/inductance)
+                current_data[component_id] = (source_voltage/total_resistance) * (1 - np.exp(-total_resistance*time_points/inductance))
+                
+            elif component['type'] == "Battery":
+                voltage = float(component['value'])
+                voltage_data[component_id] = voltage * np.ones_like(time_points)
+                
+                # Current depends on the circuit
+                # Find connected resistors
+                total_resistance = float('inf')  # Default
+                for conn in self.connections:
+                    if conn['from'][0] == component_id or conn['to'][0] == component_id:
+                        other = conn['to'][0] if conn['from'][0] == component_id else conn['from'][0]
+                        if self.components.get(other, {}).get('type') == "Resistor":
+                            r = float(self.components[other]['value'])
+                            total_resistance = min(total_resistance, r)
+                
+                if total_resistance < float('inf'):
+                    current_data[component_id] = (voltage / total_resistance) * np.ones_like(time_points)
+                else:
+                    current_data[component_id] = np.zeros_like(time_points)
+                
+            elif component['type'] == "LED":
+                forward_voltage = float(component['value'])
+                connected_sources = self._find_connected_sources(component_id)
+                source_voltage = 0
+                for src in connected_sources:
+                    source_voltage += float(self.components[src]['value'])
+                
+                # LED has voltage drop when conducting
+                if source_voltage > forward_voltage:
+                    voltage_data[component_id] = forward_voltage * np.ones_like(time_points)
+                    
+                    # Find current limiting resistor
+                    total_resistance = 1000  # Default
+                    for conn in self.connections:
+                        if conn['from'][0] == component_id or conn['to'][0] == component_id:
+                            other = conn['to'][0] if conn['from'][0] == component_id else conn['from'][0]
+                            if self.components.get(other, {}).get('type') == "Resistor":
+                                total_resistance = float(self.components[other]['value'])
+                    
+                    current_data[component_id] = ((source_voltage - forward_voltage) / total_resistance) * np.ones_like(time_points)
+                else:
+                    voltage_data[component_id] = source_voltage * np.ones_like(time_points)
+                    current_data[component_id] = np.zeros_like(time_points)
+            else:
+                # Default behavior for other components
+                voltage_data[component_id] = np.zeros_like(time_points)
+                current_data[component_id] = np.zeros_like(time_points)
+        
+        return time_points, voltage_data, current_data
+    
+    def _find_connected_sources(self, component_id):
+        """Find all voltage sources connected to this component"""
+        connected_sources = []
+        for conn in self.connections:
+            if conn['from'][0] == component_id:
+                if conn['to'][0] in self.voltage_sources:
+                    connected_sources.append(conn['to'][0])
+            elif conn['to'][0] == component_id:
+                if conn['from'][0] in self.voltage_sources:
+                    connected_sources.append(conn['from'][0])
+        return connected_sources
+
+class MatplotlibCanvas(FigureCanvasQTAgg):
+    """Canvas for displaying matplotlib plots in Qt"""
+    def __init__(self, parent=None, width=5, height=4, dpi=100):
+        self.fig = Figure(figsize=(width, height), dpi=dpi)
+        self.axes = self.fig.add_subplot(111)
+        super().__init__(self.fig)
+        self.setParent(parent)
+
+class CircuitCanvas(QGraphicsView):
+    def __init__(self, main_window=None):
+        super().__init__()
+        # Store reference to main window
+        self.main_window = main_window
+        
+        # Create scene
+        self.scene = QGraphicsScene()
+        self.setScene(self.scene)
+        
+        # View settings
+        self.setRenderHint(QPainter.Antialiasing)
+        self.setViewportUpdateMode(QGraphicsView.FullViewportUpdate)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.setDragMode(QGraphicsView.RubberBandDrag)
+        
+        # Wire drawing state
+        self.drawing_wire = False
+        self.temp_line = None
+        self.wire_start = None
+        self.wire_mode = False
+        
+        # Grid settings
+        self.grid_size = 10
+        self.grid_visible = True
+        
+        # Setup scene
+        self.scene.setSceneRect(-2000, -2000, 4000, 4000)
+        self.setupGrid()
+        
+        # Styling
+        self.setFrameShape(QFrame.StyledPanel)
+        self.setFrameShadow(QFrame.Sunken)
+        self.setStyleSheet("background-color: #FFFFFF;")
+        
+        # Add temporary wire as SmartWire
+        self.temp_wire = None
+        self.highlight_pin = None
+        self.target_highlight = None
+
+        # Add context menu
+        self.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.customContextMenuRequested.connect(self.showContextMenu)
+
+        self.components_movable = True
+        self.wire_start_pin_index = None  # Add this new line to track which pin is being connected
+        self.connections = []  # Add this to track all wire connections
+        self.simulator = CircuitSimulator()
+        self.simulation_results = None
+        self.target_pin_index = -1  # Initialize missing attribute
+
+    def showStatusMessage(self, message):
+        """Helper method to safely access status bar"""
+        if self.main_window and hasattr(self.main_window, 'statusBar'):
+            self.main_window.statusBar.showMessage(message)
+
+    def setupGrid(self):
+        # Create grid
+        self.grid_lines = []
+        for x in range(-2000, 2001, self.grid_size):
+            line = self.scene.addLine(x, -2000, x, 2000, 
+                                    QPen(QColor(230, 230, 230), 0.5))
+            line.setZValue(-10)
+            self.grid_lines.append(line)
+        
+        for y in range(-2000, 2001, self.grid_size):
+            line = self.scene.addLine(-2000, y, 2000, y, 
+                                    QPen(QColor(230, 230, 230), 0.5))
+            line.setZValue(-10)
+            self.grid_lines.append(line)
+        
+        # Add major grid lines
+        for x in range(-2000, 2001, self.grid_size * 5):
+            line = self.scene.addLine(x, -2000, x, 2000, 
+                                    QPen(QColor(200, 200, 220), 0.8))
+            line.setZValue(-9)
+            self.grid_lines.append(line)
+        
+        for y in range(-2000, 2001, self.grid_size * 5):
+            line = self.scene.addLine(-2000, y, 2000, y, 
+                                    QPen(QColor(200, 200, 220), 0.8))
+            line.setZValue(-9)
+            self.grid_lines.append(line)
+
+    def toggleGrid(self):
+        self.grid_visible = not self.grid_visible
+        for line in self.grid_lines:
+            line.setVisible(self.grid_visible)
+
+    def setComponentsMovable(self, movable):
+        """Set all components movable or not movable"""
+        self.components_movable = movable
+        for item in self.scene.items():
+            if isinstance(item, ComponentItem):
+                item.setMovable(movable)
+
+    def mousePressEvent(self, event):
+        if self.wire_mode and event.button() == Qt.LeftButton:
+            scene_pos = self.mapToScene(event.position().toPoint())
+            item = self.scene.itemAt(scene_pos, self.transform())
+            
+            if isinstance(item, ComponentItem):
+                self.setComponentsMovable(False)
+                self.wire_start = item
+                min_dist = float('inf')
+                closest_pin = None
+                pin_index = -1
+                
+                for idx, pin in enumerate(item.pin_points):
+                    angle_rad = item.rotation() * math.pi / 180
+                    rotated_pin = QPointF()
+                    rotated_pin.setX(pin.x() * math.cos(angle_rad) - pin.y() * math.sin(angle_rad))
+                    rotated_pin.setY(pin.x() * math.sin(angle_rad) + pin.y() * math.cos(angle_rad))
+                    pin_pos = item.pos() + rotated_pin
+                    
+                    dist = ((pin_pos.x() - scene_pos.x())**2 + 
+                           (pin_pos.y() - scene_pos.y())**2)**0.5
+                    
+                    if dist < min_dist and dist < 25:
+                        min_dist = dist
+                        closest_pin = pin_pos
+                        pin_index = idx
+                
+                if closest_pin:
+                    self.wire_start_pos = closest_pin
+                    self.wire_start_pin_index = pin_index  # Store the pin index
+                    self.drawing_wire = True
+                    
+                    self.temp_wire = SmartWire(
+                        closest_pin.x(), closest_pin.y(),
+                        closest_pin.x(), closest_pin.y()
+                    )
+                    self.scene.addItem(self.temp_wire)
+                    
+                    # Add visual feedback
+                    self.highlight_pin = QGraphicsEllipseItem(
+                        closest_pin.x() - 6, closest_pin.y() - 6, 12, 12)
+                    self.highlight_pin.setBrush(QBrush(QColor(255, 140, 0, 200)))
+                    self.highlight_pin.setPen(QPen(Qt.transparent))
+                    self.highlight_pin.setZValue(10)
+                    self.scene.addItem(self.highlight_pin)
+                else:
+                    self.wire_start = None
+                    self.wire_start_pin_index = None
+                    self.showStatusMessage("Click closer to a component pin")
+            
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self.drawing_wire and self.temp_wire:
+            scene_pos = self.mapToScene(event.position().toPoint())
+            
+            # Find potential target pins while moving
+            found_target = False
+            target_pin = None
+            target_component = None
+            
+            # Grid snap
+            x = round(scene_pos.x() / self.grid_size) * self.grid_size
+            y = round(scene_pos.y() / self.grid_size) * self.grid_size
+            scene_pos = QPointF(x, y)
+            
+            # Search all components for potential pin targets
+            for item in self.scene.items():
+                if isinstance(item, ComponentItem) and item != self.wire_start:
+                    for pin in item.pin_points:
+                        # Get the rotation-adjusted pin position
+                        angle_rad = item.rotation() * math.pi / 180
+                        rotated_pin = QPointF()
+                        rotated_pin.setX(pin.x() * math.cos(angle_rad) - pin.y() * math.sin(angle_rad))
+                        rotated_pin.setY(pin.x() * math.sin(angle_rad) + pin.y() * math.cos(angle_rad))
+                        
+                        pin_pos = item.pos() + rotated_pin
+                        dist = ((pin_pos.x() - scene_pos.x())**2 + 
+                                (pin_pos.y() - scene_pos.y())**2)**0.5
+                        
+                        if dist < 25:  # Increased snap range
+                            scene_pos = pin_pos
+                            found_target = True
+                            target_pin = pin_pos
+                            target_component = item
+                            break
+                    if found_target:
+                        break
+            
+            # Update or create target highlight
+            if hasattr(self, 'target_highlight') and self.target_highlight:
+                self.scene.removeItem(self.target_highlight)
+                self.target_highlight = None
+                
+            if found_target and target_pin and target_component != self.wire_start:
+                self.target_highlight = QGraphicsEllipseItem(
+                    target_pin.x() - 6, target_pin.y() - 6, 12, 12)
+                self.target_highlight.setBrush(QBrush(QColor(0, 200, 0, 200)))
+                self.target_highlight.setPen(QPen(Qt.transparent))
+                self.target_highlight.setZValue(10)
+                self.scene.addItem(self.target_highlight)
+                self.showStatusMessage(f"Connect to {target_component.component.name}")
+            
+            # Update smart wire
+            self.temp_wire.update_end_point(scene_pos.x(), scene_pos.y())
+            
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if self.drawing_wire and self.temp_wire:
+            scene_pos = self.mapToScene(event.position().toPoint())
+            
+            # Clean up highlights
+            self._cleanup_highlights()
+            
+            valid_connection = False
+            end_pos = scene_pos
+            target_component = None
+            self.target_pin_index = -1  # Initialize as class member so it's available to _create_wire_connection
+            
+            # Find target component and pin
+            for item in self.scene.items():
+                if isinstance(item, ComponentItem) and item != self.wire_start:
+                    for idx, pin in enumerate(item.pin_points):
+                        angle_rad = item.rotation() * math.pi / 180
+                        rotated_pin = QPointF()
+                        rotated_pin.setX(pin.x() * math.cos(angle_rad) - pin.y() * math.sin(angle_rad))
+                        rotated_pin.setY(pin.x() * math.sin(angle_rad) + pin.y() * math.cos(angle_rad))
+                        pin_pos = item.pos() + rotated_pin
+                        
+                        dist = ((pin_pos.x() - scene_pos.x())**2 + 
+                               (pin_pos.y() - scene_pos.y())**2)**0.5
+                        
+                        if dist < 35:  # Increased detection radius
+                            end_pos = pin_pos
+                            valid_connection = True
+                            target_component = item
+                            self.target_pin_index = idx  # Store as class member, not local variable
+                            break
+                    if valid_connection:
+                        break
+            
+            if target_component == self.wire_start:
+                valid_connection = False
+            
+            if valid_connection:
+                connection_exists = self._check_existing_connection(
+                    self.wire_start, self.wire_start_pin_index,
+                    target_component, self.target_pin_index
+                )
+                
+                if not connection_exists:
+                    self._create_wire_connection(end_pos, target_component)
+                else:
+                    self.showStatusMessage("Connection already exists")
+            else:
+                self.showStatusMessage("Invalid connection point")
+            
+            # Cleanup
+            self._cleanup_wire_state()
+            
+        super().mouseReleaseEvent(event)
+    
+    def _cleanup_highlights(self):
+        """Clean up highlight indicators"""
+        if hasattr(self, 'highlight_pin') and self.highlight_pin:
+            self.scene.removeItem(self.highlight_pin)
+            self.highlight_pin = None
+        if hasattr(self, 'target_highlight') and self.target_highlight:
+            self.scene.removeItem(self.target_highlight)
+            self.target_highlight = None
+    
+    def _check_existing_connection(self, start_comp, start_idx, end_comp, end_idx):
+        """Check if a connection already exists between specific pins"""
+        for wire in self.connections:
+            if ((wire.start_component == start_comp and wire.end_component == end_comp and
+                 wire.start_pin_index == start_idx and wire.end_pin_index == end_idx) or
+                (wire.start_component == end_comp and wire.end_component == start_comp and
+                 wire.start_pin_index == end_idx and wire.end_pin_index == start_idx)):
+                return True
+        return False
+    
+    def _create_wire_connection(self, end_pos, target_component):
+        """Create a new wire connection"""
+        try:
+            # Print debugging info
+            print(f"Creating wire from {self.wire_start_pos} to {end_pos}")
+            print(f"Pin indices: {self.wire_start_pin_index} to {self.target_pin_index}")
+            
+            # Create permanent wire with thick line
+            wire = SmartWire(
+                self.wire_start_pos.x(), self.wire_start_pos.y(),
+                end_pos.x(), end_pos.y()
+            )
+            
+            # Store connection information
+            wire.start_component = self.wire_start
+            wire.end_component = target_component
+            wire.start_pin_index = self.wire_start_pin_index
+            wire.end_pin_index = self.target_pin_index  # Now correctly defined
+            
+            # Make wire very clearly visible
+            wire.setPen(QPen(QColor(0, 0, 0), 4.0, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+            
+            # Add wire to scene and tracking list
+            self.scene.addItem(wire)
+            self.connections.append(wire)
+            
+            # Force visual update
+            wire.update()
+            self.scene.update()
+            self.viewport().update()
+            
+            self.showStatusMessage(f"Connected {self.wire_start.component.name} to {target_component.component.name}")
+            
+            # Switch back to select mode
+            self.wire_mode = False
+            self.setDragMode(QGraphicsView.RubberBandDrag)
+            if self.main_window:
+                self.main_window.current_tool = "select"
+                self.main_window.updateToolbarState()
+                
+        except Exception as e:
+            print(f"Wire creation error: {str(e)}")
+            self.showStatusMessage(f"Error creating wire: {str(e)}")
+    
+    def _cleanup_wire_state(self):
+        """Clean up the wire drawing state"""
+        if self.temp_wire:
+            self.scene.removeItem(self.temp_wire)
+            self.temp_wire = None
+        
+        self.wire_start = None
+        self.wire_start_pin_index = None
+        self.drawing_wire = False
+        self.setComponentsMovable(True)
+        self.viewport().update()
+
+    def dragEnterEvent(self, event):
+        if isinstance(event.mimeData(), ComponentMimeData):
+            event.accept()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        if isinstance(event.mimeData(), ComponentMimeData):
+            event.accept()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        if isinstance(event.mimeData(), ComponentMimeData):
+            scene_pos = self.mapToScene(event.position().toPoint())
+            
+            # Snap to grid
+            x = round(scene_pos.x() / self.grid_size) * self.grid_size
+            y = round(scene_pos.y() / self.grid_size) * self.grid_size
+            
+            component_item = ComponentItem(event.mimeData().component)
+            component_item.setPos(x, y)
+            self.scene.addItem(component_item)
+            event.accept()
+        else:
+            event.ignore()
+
+    def wheelEvent(self, event):
+        # Custom zoom handling
+        zoom_factor = 1.15
+        if event.angleDelta().y() > 0:
+            self.scale(zoom_factor, zoom_factor)
+        else:
+            self.scale(1.0 / zoom_factor, 1.0 / zoom_factor)
+    
+    # Update to use SmartWire in simulation preview
+    def showSimulationPreview(self, show=True):
+        """Enhanced simulation preview with better visual feedback"""
+        items = self.scene.items()
+        
+        try:
+            for item in items:
+                if isinstance(item, ComponentItem):
+                    if show:
+                        # Highlight active components in simulation
+                        glow_effect = QGraphicsDropShadowEffect()
+                        glow_effect.setColor(QColor(0, 200, 0))
+                        glow_effect.setOffset(0, 0)
+                        glow_effect.setBlurRadius(15)
+                        item.setGraphicsEffect(glow_effect)
+                    else:
+                        item.setGraphicsEffect(None)
+                elif isinstance(item, SmartWire) and show:
+                    # Show current flow in wires during simulation, but keep them thick and visible
+                    item.setPen(QPen(QColor(50, 180, 50), 4.0, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+                elif isinstance(item, SmartWire) and not show:
+                    # Make sure wires stay visible even when not simulating
+                    item.setPen(QPen(QColor(0, 0, 0), 4.0, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+
+            # Force scene update to refresh display
+            self.scene.update()
+            self.viewport().update()
+            
+        except Exception as e:
+            print(f"Error in simulation preview: {str(e)}")
+    
+    # Update validation to use SmartWire class
+    def validateCircuit(self):
+        items = self.scene.items()
+        components = [item for item in items if isinstance(item, ComponentItem)]
+        wires = [item for item in items if isinstance(item, SmartWire)]
+        
+        errors = []
+        
+        # Check for unconnected components
+        for component in components:
+            connected_pins = 0
+            for wire in wires:
+                start_pos = wire.start_pos
+                end_pos = wire.end_pos
+                
+                # Check if wire connects to any pin of this component
+                for pin in component.pin_points:
+                    # Get rotation-adjusted pin position
+                    angle_rad = component.rotation() * math.pi / 180
+                    rotated_pin = QPointF()
+                    rotated_pin.setX(pin.x() * math.cos(angle_rad) - pin.y() * math.sin(angle_rad))
+                    rotated_pin.setY(pin.x() * math.sin(angle_rad) + pin.y() * math.cos(angle_rad))
+                    pin_pos = component.pos() + rotated_pin
+                    
+                    if ((abs(pin_pos.x() - start_pos.x()) < 5 and 
+                         abs(pin_pos.y() - start_pos.y()) < 5) or
+                        (abs(pin_pos.x() - end_pos.x()) < 5 and 
+                         abs(pin_pos.y() - end_pos.y()) < 5)):
+                        connected_pins += 1
+            
+            if connected_pins < component.component.pins:
+                errors.append(f"{component.component.name} has {component.component.pins - connected_pins} unconnected pins")
+        
+        # Check for floating wires
+        for wire in wires:
+            connected_ends = 0
+            start_pos = wire.start_pos
+            end_pos = wire.end_pos
+            
+            for component in components:
+                for pin in component.pin_points:
+                    # Get rotation-adjusted pin position
+                    angle_rad = component.rotation() * math.pi / 180
+                    rotated_pin = QPointF()
+                    rotated_pin.setX(pin.x() * math.cos(angle_rad) - pin.y() * math.sin(angle_rad))
+                    rotated_pin.setY(pin.x() * math.sin(angle_rad) + pin.y() * math.cos(angle_rad))
+                    pin_pos = component.pos() + rotated_pin
+                    
+                    if ((abs(pin_pos.x() - start_pos.x()) < 5 and 
+                         abs(pin_pos.y() - start_pos.y()) < 5) or
+                        (abs(pin_pos.x() - end_pos.x()) < 5 and 
+                         abs(pin_pos.y() - end_pos.y()) < 5)):
+                        connected_ends += 1
+            
+            if connected_ends < 2:
+                errors.append("Floating wire detected")
+        
+        return errors
+
+    def showContextMenu(self, position):
+        scene_pos = self.mapToScene(position)
+        item = self.scene.itemAt(scene_pos, self.transform())
+        
+        # Create menu
+        menu = QMenu()
+        
+        if item:
+            # Clicked on an item - show item-specific options
+            if isinstance(item, ComponentItem):
+                # Component menu
+                edit_action = menu.addAction("Edit Properties")
+                edit_action.triggered.connect(lambda: item.showPropertyEditor())
+                rotate_action = menu.addAction("Rotate")
+                rotate_action.triggered.connect(lambda: self.rotateItem(item))
+                menu.addSeparator()
+                delete_action = menu.addAction("Delete")
+                delete_action.triggered.connect(lambda: self.deleteItem(item))
+            elif isinstance(item, SmartWire):
+                # Wire menu
+                delete_action = menu.addAction("Delete")
+                delete_action.triggered.connect(lambda: self.deleteItem(item))
+        else:
+            # Clicked on empty canvas - show component add menu
+            add_menu = menu.addMenu("Add Component")
+            # Get components from main window
+            if self.main_window and hasattr(self.main_window, 'component_library'):
+                for i, component in enumerate(self.main_window.component_library.components):
+                    action = add_menu.addAction(component.name)
+                    action.triggered.connect(lambda checked, comp=component, pos=scene_pos: 
+                                            self.addComponentAt(comp, pos))
+        
+        menu.exec(self.viewport().mapToGlobal(position))
+    
+    def addComponentAt(self, component, position):
+        # Snap to grid
+        x = round(position.x() / self.grid_size) * self.grid_size
+        y = round(position.y() / self.grid_size) * self.grid_size
+        
+        # Create new component
+        component_item = ComponentItem(component)
+        component_item.setPos(x, y)
+        self.scene.addItem(component_item)
+        self.showStatusMessage(f"Added {component.name} to circuit")
+    
+    def rotateItem(self, item):
+        if isinstance(item, ComponentItem):
+            item.rotation_angle += 90
+            item.setRotation(item.rotation_angle)
+            self.showStatusMessage(f"Rotated {item.component.name}")
+    
+    def deleteItem(self, item):
+        """Enhanced delete item method with proper checks to avoid segmentation faults"""
+        try:
+            if isinstance(item, ComponentItem):
+                # Remove all connected wires first
+                wires_to_remove = []
+                
+                # Make a copy of the connections list to avoid modification during iteration
+                for wire in list(self.connections):
+                    if wire.start_component == item or wire.end_component == item:
+                        if wire in self.scene.items():  # Check if wire is still in the scene
+                            wires_to_remove.append(wire)
+                
+                for wire in wires_to_remove:
+                    if wire in self.scene.items():  # Double-check before removal
+                        self.scene.removeItem(wire)
+                        if wire in self.connections:
+                            self.connections.remove(wire)
+                
+                if item in self.scene.items():  # Check if item is still in the scene
+                    self.scene.removeItem(item)
+                    msg = f"Deleted {item.component.name} and its connections"
+                else:
+                    msg = f"Component already removed"
+            
+            elif isinstance(item, SmartWire):
+                if item in self.scene.items():  # Check if item is still in the scene
+                    self.scene.removeItem(item)
+                    if item in self.connections:
+                        self.connections.remove(item)
+                    msg = "Deleted wire connection"
+                else:
+                    msg = "Wire already removed"
+            else:
+                msg = "Unknown item type"
+            
+            # Force visual update
+            self.scene.update()
+            self.viewport().update()
+            self.showStatusMessage(msg)
+            
+        except Exception as e:
+            print(f"Error during item deletion: {str(e)}")
+            self.showStatusMessage(f"Error deleting item: {str(e)}")
+
+    def prepareSimulation(self):
+        """Prepare the simulation by analyzing the circuit"""
+        # Reset the simulator
+        self.simulator = CircuitSimulator()
+        
+        # Collect all components and connections
+        components = {}
+        for item in self.scene.items():
+            if isinstance(item, ComponentItem):
+                comp_id = str(id(item))
+                value = "0"
+                
+                # Get appropriate value based on component type
+                if item.component.name == "Resistor":
+                    value = item.component.properties.get("Resistance (Ω)", "1000")
+                elif item.component.name == "Capacitor":
+                    value = item.component.properties.get("Capacitance (F)", "0.000001")
+                elif item.component.name == "Inductor":
+                    value = item.component.properties.get("Inductance (H)", "0.001")
+                elif item.component.name == "Battery":
+                    value = item.component.properties.get("Voltage (V)", "9.0")
+                elif item.component.name == "LED":
+                    value = item.component.properties.get("Forward Voltage (V)", "2.0")
+                
+                # Add to simulator
+                self.simulator.add_component(comp_id, item.component.name, value)
+                components[item] = comp_id
+        
+        # Process connections
+        for wire in self.connections:
+            if wire.start_component and wire.end_component:
+                from_id = components.get(wire.start_component)
+                to_id = components.get(wire.end_component)
+                if from_id and to_id:
+                    self.simulator.add_connection(
+                        from_id, wire.start_pin_index,
+                        to_id, wire.end_pin_index
+                    )
+        
+        return len(components) > 0
+    
+    def runSimulation(self):
+        """Run the circuit simulation and store results"""
+        if self.prepareSimulation():
+            # Run simulation for 0.1 seconds with 0.001 second step
+            time_points, voltage_data, current_data = self.simulator.simulate(0.1, 0.001)
+            self.simulation_results = {
+                'time': time_points,
+                'voltage': voltage_data,
+                'current': current_data
+            }
+            return True
+        return False
+    
+    def showSimulationResults(self):
+        """Display simulation results in a dialog"""
+        if not self.simulation_results:
+            return
+        
+        # Create dialog for results
+        dialog = QDialog(self.main_window)
+        dialog.setWindowTitle("Circuit Simulation Results")
+        dialog.setMinimumSize(800, 600)
+        
+        layout = QVBoxLayout(dialog)
+        
+        # Create tabs for different plots
+        tabs = QTabWidget()
+        layout.addWidget(tabs)
+        
+        # Voltage waveform
+        voltage_canvas = MatplotlibCanvas(dialog, width=5, height=4, dpi=100)
+        voltage_tab = QWidget()
+        voltage_layout = QVBoxLayout(voltage_tab)
+        voltage_layout.addWidget(voltage_canvas)
+        tabs.addTab(voltage_tab, "Voltage")
+        
+        # Current waveform
+        current_canvas = MatplotlibCanvas(dialog, width=5, height=4, dpi=100)
+        current_tab = QWidget()
+        current_layout = QVBoxLayout(current_tab)
+        current_layout.addWidget(current_canvas)
+        tabs.addTab(current_tab, "Current")
+        
+        # Plot voltage data
+        voltage_canvas.axes.clear()
+        for component_id, voltage in self.simulation_results['voltage'].items():
+            component_type = self.simulator.components[component_id]['type']
+            voltage_canvas.axes.plot(
+                self.simulation_results['time'], 
+                voltage, 
+                label=f"{component_type}"
+            )
+        voltage_canvas.axes.set_xlabel('Time (s)')
+        voltage_canvas.axes.set_ylabel('Voltage (V)')
+        voltage_canvas.axes.set_title('Voltage vs. Time')
+        voltage_canvas.axes.grid(True)
+        voltage_canvas.axes.legend()
+        voltage_canvas.draw()
+        
+        # Plot current data
+        current_canvas.axes.clear()
+        for component_id, current in self.simulation_results['current'].items():
+            component_type = self.simulator.components[component_id]['type']
+            current_canvas.axes.plot(
+                self.simulation_results['time'], 
+                current, 
+                label=f"{component_type}"
+            )
+        current_canvas.axes.set_xlabel('Time (s)')
+        current_canvas.axes.set_ylabel('Current (A)')
+        current_canvas.axes.set_title('Current vs. Time')
+        current_canvas.axes.grid(True)
+        current_canvas.axes.legend()
+        current_canvas.draw()
+        
+        # Add close button
+        close_button = QPushButton("Close")
+        close_button.clicked.connect(dialog.accept)
+        layout.addWidget(close_button)
+        
+        # Show dialog
+        dialog.exec()
+
+class ComponentLibrary(QListWidget):
+    def __init__(self):
+        super().__init__()
+        self.components = [
+            Component("Resistor", "R", 2),
+            Component("Capacitor", "C", 2),
+            Component("Inductor", "L", 2),
+            Component("Battery", "V", 2),
+            Component("LED", "LED", 2),
+            Component("Transistor", "T", 3),
+            Component("Diode", "D", 2),
+            Component("Switch", "SW", 2),
+            Component("Potentiometer", "POT", 3),
+            Component("IC", "IC", 4)
+        ]
+        
+        for component in self.components:
+            self.addItem(f"{component.name}")
+        
+        self.setDragEnabled(True)
+        self.setStyleSheet("""
+            QListWidget {
+                background-color: #F5F5F5;
+                border: 1px solid #CCCCCC;
+                border-radius: 4px;
+            }
+            QListWidget::item {
+                padding: 4px;
+                border-bottom: 1px solid #EEEEEE;
+            }
+            QListWidget::item:selected {
+                background-color: #D0E3FA;
+                color: #000000;
+            }
+            QListWidget::item:hover {
+                background-color: #E5E5E5;
+            }
+        """)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            item = self.itemAt(event.position().toPoint())
+            if item:
+                index = self.row(item)
+                component = self.components[index]
+                
+                drag = QDrag(self)
+                mime_data = ComponentMimeData()
+                mime_data.component = component
+                drag.setMimeData(mime_data)
+                
+                # Create a pixmap for drag visual feedback
+                pixmap = QPixmap(60, 40)
+                pixmap.fill(Qt.transparent)
+                painter = QPainter(pixmap)
+                painter.setPen(QPen(Qt.black, 2))
+                painter.setBrush(QBrush(QColor(240, 240, 240)))
+                painter.drawRoundedRect(5, 5, 50, 30, 5, 5)
+                painter.drawText(pixmap.rect(), Qt.AlignCenter, component.symbol)
+                painter.end()
+                
+                drag.setPixmap(pixmap)
+                drag.setHotSpot(QPoint(30, 20))
+                
+                drag.exec()
+        super().mousePressEvent(event)
+
+class SmartLab(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("SmartLab - Professional Circuit Designer")
+        self.setGeometry(100, 100, 1200, 800)
+        
+        # Create main widget and layout
+        main_widget = QWidget()
+        self.setCentralWidget(main_widget)
+        layout = QHBoxLayout(main_widget)
+        layout.setContentsMargins(4, 4, 4, 4)
+        
+        # Create left panel with component library - update styling with new colors
+        left_panel = QWidget()
+        left_panel.setMaximumWidth(220)
+        left_panel.setStyleSheet("""
+            background-color: #1E5128;  /* Dark green instead of dark blue */
+            border-radius: 6px;
+            margin: 2px;
+        """)
+        left_layout = QVBoxLayout(left_panel)
+        
+        # Component library header with updated colors
+        library_label = QLabel("Components")
+        library_label.setStyleSheet("""
+            font-weight: bold; 
+            font-size: 16px; 
+            color: #FFFFFF;
+            padding: 8px;
+            background-color: #4E9F3D;  /* Medium green */
+            border-radius: 4px;
+        """)
+        left_layout.addWidget(library_label)
+        
+        # Component library with updated styling
+        self.component_library = ComponentLibrary()
+        self.component_library.setStyleSheet("""
+            QListWidget {
+                background-color: #F6F6F6;
+                border: 1px solid #4E9F3D;
+                border-radius: 4px;
+                padding: 4px;
+            }
+            QListWidget::item {
+                padding: 8px;
+                margin: 2px;
+                border-bottom: 1px solid #E0E0E0;
+                border-radius: 4px;
+                background-color: #FFFFFF;
+            }
+            QListWidget::item:selected {
+                background-color: #D8E9A8;  /* Light green */
+                color: #1E5128;
+            }
+            QListWidget::item:hover {
+                background-color: #F0F7E6;
+            }
+        """)
+        left_layout.addWidget(self.component_library)
+        
+        # Add simulation results area
+        self.sim_results_label = QLabel("Simulation Results")
+        self.sim_results_label.setStyleSheet("""
+            font-weight: bold; 
+            font-size: 16px; 
+            color: #FFFFFF;
+            padding: 8px;
+            background-color: #4E9F3D;  /* Medium green */
+            border-radius: 4px;
+            margin-top: 10px;
+        """)
+        left_layout.addWidget(self.sim_results_label)
+        
+        self.sim_results = QLabel("No simulation data")
+        self.sim_results.setStyleSheet("""
+            background-color: #F6F6F6;
+            color: #333333;
+            padding: 8px;
+            border-radius: 4px;
+            min-height: 100px;
+        """)
+        self.sim_results.setWordWrap(True)
+        self.sim_results.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        left_layout.addWidget(self.sim_results)
+        
+        # Error panel
+        self.error_label = QLabel("Circuit Validation")
+        self.error_label.setStyleSheet("""
+            font-weight: bold; 
+            font-size: 16px; 
+            color: #FFFFFF;
+            padding: 8px;
+            background-color: #4E9F3D;  /* Medium green */
+            border-radius: 4px;
+            margin-top: 10px;
+        """)
+        left_layout.addWidget(self.error_label)
+        
+        self.error_panel = QLabel("No errors detected")
+        self.error_panel.setStyleSheet("""
+            background-color: #F6F6F6;
+            color: #00AA00;
+            padding: 8px;
+            border-radius: 4px;
+            min-height: 80px;
+        """)
+        self.error_panel.setWordWrap(True)
+        self.error_panel.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        left_layout.addWidget(self.error_panel)
+        
+        # Create circuit canvas with reference to main window
+        self.canvas = CircuitCanvas(self)
+        self.canvas.setAcceptDrops(True)
+        
+        # Add widgets to main layout
+        layout.addWidget(left_panel)
+        layout.addWidget(self.canvas, stretch=4)
+        
+        # Setup menu and toolbar
+        self.create_menu_bar()
+        self.create_toolbar()
+        self.create_status_bar()
+        
+        # Application state
+        self.current_tool = "select"
+        self.canvas.wire_mode = False
+        
+        # Apply main window stylesheet with updated colors
+        self.setStyleSheet("""
+            QMainWindow {
+                background-color: #F0F0F5;
+            }
+            QToolBar {
+                background-color: #1E5128;  /* Dark green */
+                spacing: 3px;
+                padding: 3px;
+                border: none;
+            }
+            QToolButton {
+                color: #FFFFFF;
+                background-color: #4E9F3D;  /* Medium green */
+                border: 1px solid transparent;
+                border-radius: 4px;
+                padding: 5px;
+                margin: 2px;
+                font-weight: bold;
+            }
+            QToolButton:hover {
+                background-color: #D8E9A8;  /* Light green */
+                border: 1px solid #F0F0F0;
+                color: #1E5128;
+            }
+            QToolButton:pressed {
+                background-color: #91C788;
+            }
+            QStatusBar {
+                background-color: #1E5128;  /* Dark green */
+                color: #FFFFFF;
+            }
+            QLabel {
+                color: #333333;
+            }
+            QMenuBar {
+                background-color: #1E5128;  /* Dark green */
+                color: #FFFFFF;
+            }
+            QMenuBar::item {
+                background-color: transparent;
+                color: #FFFFFF;
+                padding: 6px 10px;
+            }
+            QMenuBar::item:selected {
+                background-color: #4E9F3D;  /* Medium green */
+            }
+            QMenu {
+                background-color: #1E5128;  /* Dark green */
+                color: #FFFFFF;
+                border: 1px solid #4E9F3D;
+            }
+            QMenu::item {
+                padding: 6px 20px;
+            }
+            QMenu::item:selected {
+                background-color: #4E9F3D;  /* Medium green */
+            }
+        """)
+    
+    def create_menu_bar(self):
+        menubar = self.menuBar()
+        
+        # File menu
+        file_menu = menubar.addMenu("File")
+        new_action = file_menu.addAction("New")
+        new_action.setShortcut("Ctrl+N")
+        open_action = file_menu.addAction("Open")
+        open_action.setShortcut("Ctrl+O")
+        save_action = file_menu.addAction("Save")
+        save_action.setShortcut("Ctrl+S")
+        file_menu.addSeparator()
+        exit_action = file_menu.addAction("Exit")
+        exit_action.setShortcut("Alt+F4")
+        exit_action.triggered.connect(self.close)
+        
+        # Edit menu
+        edit_menu = menubar.addMenu("Edit")
+        undo_action = edit_menu.addAction("Undo")
+        undo_action.setShortcut("Ctrl+Z")
+        redo_action = edit_menu.addAction("Redo")
+        redo_action.setShortcut("Ctrl+Y")
+        edit_menu.addSeparator()
+        select_all_action = edit_menu.addAction("Select All")
+        select_all_action.setShortcut("Ctrl+A")
+        
+        # View menu
+        view_menu = menubar.addMenu("View")
+        zoom_in_action = view_menu.addAction("Zoom In")
+        zoom_in_action.setShortcut("Ctrl++")
+        zoom_in_action.triggered.connect(self.zoom_in)
+        zoom_out_action = view_menu.addAction("Zoom Out")
+        zoom_out_action.setShortcut("Ctrl+-")
+        zoom_out_action.triggered.connect(self.zoom_out)
+        reset_view_action = view_menu.addAction("Reset View")
+        reset_view_action.setShortcut("Ctrl+0")
+        reset_view_action.triggered.connect(self.reset_view)
+        view_menu.addSeparator()
+        toggle_grid_action = view_menu.addAction("Toggle Grid")
+        toggle_grid_action.setShortcut("Ctrl+G")
+        toggle_grid_action.triggered.connect(self.canvas.toggleGrid)
+        
+        # Tools menu
+        tools_menu = menubar.addMenu("Tools")
+        simulate_action = tools_menu.addAction("Simulate Circuit")
+        simulate_action.setShortcut("F5")
+        pcb_action = tools_menu.addAction("Generate PCB")
+        pcb_action.setShortcut("F6")
+        
+        # Help menu
+        help_menu = menubar.addMenu("Help")
+        help_action = help_menu.addAction("SmartLab Help")
+        help_action.setShortcut("F1")
+        about_action = help_menu.addAction("About SmartLab")
+    
+    def create_toolbar(self):
+        toolbar = QToolBar("Main Toolbar")
+        toolbar.setMovable(False)
+        toolbar.setIconSize(QSize(24, 24))
+        self.addToolBar(toolbar)
+        
+        # Create actions
+        self.select_action = toolbar.addAction("Select")
+        self.wire_action = toolbar.addAction("Wire")
+        self.delete_action = toolbar.addAction("Delete")
+        toolbar.addSeparator()
+        self.rotate_action = toolbar.addAction("Rotate")
+        self.mirror_action = toolbar.addAction("Mirror")
+        toolbar.addSeparator()
+        self.zoom_in_action = toolbar.addAction("Zoom In")
+        self.zoom_out_action = toolbar.addAction("Zoom Out")
+        toolbar.addSeparator()
+        self.validate_action = toolbar.addAction("Validate")
+        self.simulate_action = toolbar.addAction("Simulate")
+        
+        # Store toolbar for later updates
+        self.toolbar = toolbar
+        
+        toolbar.actionTriggered.connect(self.handle_tool_action)
+    
+    def updateToolbarState(self):
+        """Update toolbar button states based on current tool"""
+        # Reset all button styles
+        for action in self.toolbar.actions():
+            if hasattr(action, 'setChecked'):
+                action.setChecked(False)
+        
+        # Highlight the current tool
+        if self.current_tool == "select":
+            if hasattr(self.select_action, 'setChecked'):
+                self.select_action.setChecked(True)
+        elif self.current_tool == "wire":
+            if hasattr(self.wire_action, 'setChecked'):
+                self.wire_action.setChecked(True)
+    
+    def create_status_bar(self):
+        self.statusBar = QStatusBar()
+        self.setStatusBar(self.statusBar)
+        self.statusBar.showMessage("Ready")
+    
+    def handle_tool_action(self, action):
+        tool = action.text().lower()
+        
+        # Special debug - let user know that the wire tool is being selected
+        if tool == "wire":
+            self.statusBar.showMessage("Wire tool selected - Click on a pin of a component to start connecting")
+            
+        self.current_tool = tool
+        
+        # Update toolbar to reflect current tool
+        self.updateToolbarState()
+        
+        # Reset all tools first
+        self.canvas.wire_mode = False
+        self.canvas.setDragMode(QGraphicsView.RubberBandDrag)
+        self.canvas.showSimulationPreview(False)
+        
+        # Set status message
+        self.statusBar.showMessage(f"Tool: {action.text()}")
+        
+        # Handle specific tools
+        if tool == "select":
+            self.canvas.setComponentsMovable(True)
+            
+        elif tool == "wire":
+            self.canvas.wire_mode = True
+            self.canvas.setDragMode(QGraphicsView.NoDrag)
+            # Keep components selectable but not movable during wire mode
+            self.canvas.setComponentsMovable(False)
+            self.statusBar.showMessage("Wire Tool: Click on component pins to connect. Each connection requires selecting the tool again.")
+        
+        elif tool == "rotate":
+            selected_items = self.canvas.scene.selectedItems()
+            for item in selected_items:
+                if isinstance(item, ComponentItem):
+                    item.rotation_angle += 90
+                    item.setRotation(item.rotation_angle)
+                    # Regenerate pins after rotation if needed
+            self.statusBar.showMessage(f"Rotated {len(selected_items)} component(s)")
+        elif tool == "delete":
+            selected_items = self.canvas.scene.selectedItems()
+            if selected_items:
+                for item in selected_items:
+                    # Use the enhanced delete method
+                    self.canvas.deleteItem(item)
+                self.statusBar.showMessage(f"Deleted {len(selected_items)} item(s)")
+            else:
+                self.statusBar.showMessage("Select items to delete")
+        elif tool == "mirror":
+            selected_items = self.canvas.scene.selectedItems()
+            for item in selected_items:
+                if isinstance(item, ComponentItem):
+                    item.setScale(-1 if item.scale() == 1 else 1, 1)
+            self.statusBar.showMessage(f"Mirrored {len(selected_items)} component(s)")
+        elif tool == "zoom in":
+            self.zoom_in()
+        elif tool == "zoom out":
+            self.zoom_out()
+        elif tool == "validate":
+            errors = self.canvas.validateCircuit()
+            if errors:
+                error_text = "\n".join(errors)
+                self.error_panel.setText(error_text)
+                self.error_panel.setStyleSheet("""
+                    background-color: #FFF0F0;
+                    color: #CC0000;
+                    padding: 8px;
+                    border-radius: 4px;
+                    min-height: 80px;
+                """)
+                self.statusBar.showMessage(f"Circuit validation found {len(errors)} issues")
+            else:
+                self.error_panel.setText("No errors detected")
+                self.error_panel.setStyleSheet("""
+                    background-color: #F0FFF0;
+                    color: #00AA00;
+                    padding: 8px;
+                    border-radius: 4px;
+                    min-height: 80px;
+                """)
+                self.statusBar.showMessage("Circuit validation passed")
+        elif tool == "simulate":
+            # Run simulation with proper error handling
+            try:
+                # Validate circuit first
+                errors = self.canvas.validateCircuit()
+                if errors:
+                    error_text = "Cannot simulate circuit with errors:\n" + "\n".join(errors)
+                    self.sim_results.setText(error_text)
+                    self.sim_results.setStyleSheet("""
+                        background-color: #FFF0F0;
+                        color: #CC0000;
+                        padding: 8px;
+                        border-radius: 4px;
+                        min-height: 100px;
+                    """)
+                    self.statusBar.showMessage("Simulation failed - circuit has errors")
+                else:
+                    # Show simulation animation
+                    self.statusBar.showMessage("Circuit simulation in progress...")
+                    QApplication.processEvents()
+                    
+                    # Run simulation
+                    self.canvas.showSimulationPreview(True)
+                    QApplication.processEvents()
+                    
+                    success = self.canvas.runSimulation()
+                    if success:
+                        # Show results dialog
+                        self.canvas.showSimulationResults()
+                        
+                        # Generate summary text for simulation panel
+                        comp_count = len(self.canvas.simulator.components)
+                        self.sim_results.setText(
+                            f"Simulation Results Summary:\n"
+                            f"- Components analyzed: {comp_count}\n"
+                            f"- Simulation time: 0.1s\n"
+                            f"- Status: Complete\n\n"
+                            f"Click Simulate again to view detailed waveforms."
+                        )
+                        self.sim_results.setStyleSheet("""
+                            background-color: #F0FFF0;
+                            color: #00AA00;
+                            padding: 8px;
+                            border-radius: 4px;
+                            min-height: 100px;
+                        """)
+                        self.statusBar.showMessage("Simulation completed successfully")
+                    else:
+                        self.sim_results.setText(
+                            "Simulation could not be completed.\n"
+                            "Please check your circuit design."
+                        )
+                        self.sim_results.setStyleSheet("""
+                            background-color: #FFF0F0;
+                            color: #CC0000;
+                            padding: 8px;
+                            border-radius: 4px;
+                            min-height: 100px;
+                        """)
+                        self.statusBar.showMessage("Simulation failed")
+            except Exception as e:
+                print(f"Simulation error: {str(e)}")
+                self.sim_results.setText(f"Simulation error: {str(e)}")
+                self.sim_results.setStyleSheet("""
+                    background-color: #FFF0F0;
+                    color: #CC0000;
+                    padding: 8px;
+                    border-radius: 4px;
+                    min-height: 100px;
+                """)
+                self.statusBar.showMessage("Simulation failed - unexpected error")
+            finally:
+                # Ensure we always return to normal display
+                self.canvas.showSimulationPreview(False)
+                QApplication.processEvents()
+    
+    def zoom_in(self):
+        self.canvas.scale(1.2, 1.2)
+    
+    def zoom_out(self):
+        self.canvas.scale(1/1.2, 1/1.2)
+    
+    def reset_view(self):
+        self.canvas.resetTransform()
+        self.canvas.fitInView(self.canvas.scene.sceneRect(), Qt.KeepAspectRatio)
+
+class ComponentMimeData(QMimeData):
+    def __init__(self):
+        super().__init__()
+        self.component = None
+        self.setData("application/x-component", b"component")
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    
+    # Set application style
+    app.setStyle("Fusion")
+    
+    window = SmartLab()
+    window.show()
+    sys.exit(app.exec())
